@@ -2,19 +2,17 @@
 set -euo pipefail
 
 #######################################
-# SD FACTORY SETUP
+# SD FACTORY SIMPLE PI SETUP
 #######################################
 
 FACTORY_USER="sdfactory"
 FACTORY_HOME="/home/$FACTORY_USER"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SERVICE_NAME="wio-serial-panel.service"
 GPIO_INIT_SERVICE_NAME="sd-factory-gpio-init.service"
 GPIO_INIT_SCRIPT="/usr/local/bin/sd-factory-gpio-init.sh"
-
 SUDOERS_FILE="/etc/sudoers.d/sdfactory"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # GPIO CONFIG
 START_BUTTON_PIN=17
@@ -22,270 +20,266 @@ WORKING_LED_PIN=27
 COMPLETE_LED_PIN=22
 READY_LED_PIN=23
 
+# Files expected to be in the same folder as this setup script
 REQUIRED_FILES=(
-autoimagecreate.sh
-autosdprep.sh
-autosdworkflow.sh
-autosettingsreplace.sh
-enableterminal.sh
-wio_serial_panel.py
-autodtbreplace.sh
-autoeasyromreplace.sh
-autoeject.sh
-sdfactoryosupdate.sh
-sdfactoryeasyromsupdate.sh
-sdfactorysettingsupdate.sh
+  "autoimagecreate.sh"
+  "autosdprep.sh"
+  "autosdworkflow.sh"
+  "autosettingsreplace.sh"
+  "enableterminal.sh"
+  "wio_serial_panel.py"
+  "autodtbreplace.sh"
+  "autoeasyromreplace.sh"
+  "autoeject.sh"
+  "sdfactoryosupdate.sh"
+  "sdfactoryeasyromsupdate.sh"
+  "sdfactorysettingsupdate.sh"
 )
 
-#######################################
-# FUNCTIONS
-#######################################
+OPTIONAL_FILES=(
+  ".bash_profile"
+)
 
-log(){
-echo "[SETUP] $*"
+log() {
+    echo "[SD-FACTORY-SETUP] $*"
 }
 
-fail(){
-echo "[SETUP ERROR] $*" >&2
-exit 1
+fail() {
+    echo "[SD-FACTORY-SETUP] ERROR: $*" >&2
+    exit 1
 }
 
-require_root(){
-[ "${EUID:-0}" -eq 0 ] || fail "Run with sudo"
+require_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        fail "Run this script with sudo or as root."
+    fi
 }
 
-check_user(){
-id "$FACTORY_USER" >/dev/null 2>&1 || fail "User $FACTORY_USER does not exist"
+check_required_files() {
+    log "Checking required files in: $SCRIPT_DIR"
+    local missing=0
+    for f in "${REQUIRED_FILES[@]}"; do
+        if [[ ! -f "$SCRIPT_DIR/$f" ]]; then
+            echo "Missing required file: $f"
+            missing=1
+        fi
+    done
+
+    if [[ "$missing" -ne 0 ]]; then
+        fail "One or more required files are missing."
+    fi
 }
 
-check_required_files(){
-log "Checking required files..."
-
-for file in "${REQUIRED_FILES[@]}"; do
-    [ -f "$SCRIPT_DIR/$file" ] || fail "Missing required file: $file"
-done
+create_user_if_needed() {
+    if id "$FACTORY_USER" >/dev/null 2>&1; then
+        log "User $FACTORY_USER already exists."
+    else
+        log "Creating user: $FACTORY_USER"
+        useradd -m -s /bin/bash "$FACTORY_USER"
+    fi
 }
 
-#######################################
-# PACKAGE INSTALL
-#######################################
-
-install_packages(){
-log "Installing packages..."
-
-apt-get update
-
-apt-get install -y \
-git \
-python3 \
-python3-pip \
-python3-serial \
-python3-rpi.gpio \
-rsync \
-parted \
-exfatprogs \
-util-linux \
-udisks2 \
-eject \
-dosfstools \
-raspi-utils
+install_packages() {
+    log "Installing required packages"
+    apt-get update
+    apt-get install -y \
+        python3 \
+        python3-serial \
+        python3-rpi.gpio \
+        rsync \
+        git \
+        sudo
 }
 
-#######################################
-# USER + GPIO ACCESS
-#######################################
+copy_scripts() {
+    log "Copying scripts to $FACTORY_HOME"
+    mkdir -p "$FACTORY_HOME"
 
-setup_gpio_user_access(){
-log "Configuring GPIO access..."
+    for f in "${REQUIRED_FILES[@]}"; do
+        install -m 755 "$SCRIPT_DIR/$f" "$FACTORY_HOME/$f"
+    done
 
-getent group gpio >/dev/null 2>&1 || groupadd --system gpio
-usermod -aG gpio "$FACTORY_USER"
+    # Optional .bash_profile replacement
+    if [[ -f "$SCRIPT_DIR/.bash_profile" ]]; then
+        log "Replacing $FACTORY_HOME/.bash_profile"
+        install -m 644 "$SCRIPT_DIR/.bash_profile" "$FACTORY_HOME/.bash_profile"
+    else
+        log "No .bash_profile found in setup folder, skipping."
+    fi
+
+    chown -R "$FACTORY_USER:$FACTORY_USER" "$FACTORY_HOME"
 }
 
-#######################################
-# DIRECTORY SETUP
-#######################################
-
-create_directories(){
-log "Creating directories..."
-
-mkdir -p "$FACTORY_HOME"
-mkdir -p "$FACTORY_HOME/logs"
-
-mkdir -p /mnt/sdboot
-mkdir -p /mnt/sdroot
-mkdir -p /mnt/easyroms
-mkdir -p /mnt/settingsroot
-
-chown -R "$FACTORY_USER:$FACTORY_USER" "$FACTORY_HOME"
+set_permissions() {
+    log "Setting script permissions"
+    chmod +x "$FACTORY_HOME"/*.sh || true
+    chmod +x "$FACTORY_HOME/wio_serial_panel.py" || true
+    chown -R "$FACTORY_USER:$FACTORY_USER" "$FACTORY_HOME"
 }
 
-#######################################
-# SCRIPT INSTALL
-#######################################
+write_sudoers() {
+    log "Writing sudoers file: $SUDOERS_FILE"
 
-install_scripts(){
-log "Installing factory scripts..."
+    cat > "$SUDOERS_FILE" <<EOF
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/autoimagecreate.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/autosdprep.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/autosdworkflow.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/autosettingsreplace.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/enableterminal.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/autodtbreplace.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/autoeasyromreplace.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/autoeject.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/sdfactoryosupdate.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/sdfactoryeasyromsupdate.sh
+$FACTORY_USER ALL=(ALL) NOPASSWD: /home/$FACTORY_USER/sdfactorysettingsupdate.sh
 
-for file in "${REQUIRED_FILES[@]}"; do
-    install "$SCRIPT_DIR/$file" "$FACTORY_HOME/$file"
-    chown "$FACTORY_USER:$FACTORY_USER" "$FACTORY_HOME/$file"
-    log "Installed $file"
-done
-}
-
-#######################################
-# MAKE ALL SCRIPTS EXECUTABLE
-#######################################
-
-make_scripts_executable(){
-log "Making all factory scripts executable individually..."
-
-for file in "${REQUIRED_FILES[@]}"; do
-    chmod +x "$FACTORY_HOME/$file"
-    chown "$FACTORY_USER:$FACTORY_USER" "$FACTORY_HOME/$file"
-    log "chmod +x applied to $FACTORY_HOME/$file"
-done
-}
-
-#######################################
-# SUDOERS RULES
-#######################################
-
-write_sudoers(){
-log "Creating sudo rules..."
-
-cat > "$SUDOERS_FILE" <<EOF
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/autosdworkflow.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/autosdprep.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/autoimagecreate.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/autodtbreplace.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/autosettingsreplace.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/autoeasyromreplace.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/autoeject.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/enableterminal.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/sdfactoryosupdate.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/sdfactoryeasyromsupdate.sh
-sdfactory ALL=(ALL) NOPASSWD: /home/sdfactory/sdfactorysettingsupdate.sh
-sdfactory ALL=(ALL) NOPASSWD: /usr/sbin/shutdown
-sdfactory ALL=(ALL) NOPASSWD: /usr/bin/systemctl
-sdfactory ALL=(ALL) NOPASSWD: /usr/bin/pinctrl
+# Optional common admin commands
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/sbin/reboot
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/sbin/shutdown
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/mount
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/umount
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/rsync
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/cp
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/mv
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/rm
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/mkdir
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/chown
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/chmod
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/tee
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/kill
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/pkill
+$FACTORY_USER ALL=(ALL) NOPASSWD: /usr/bin/python3
 EOF
 
-chmod 440 "$SUDOERS_FILE"
-visudo -cf "$SUDOERS_FILE"
+    chmod 440 "$SUDOERS_FILE"
+    visudo -cf "$SUDOERS_FILE"
 }
 
-#######################################
-# GPIO INIT SCRIPT
-#######################################
+write_gpio_init_script() {
+    log "Writing GPIO init script: $GPIO_INIT_SCRIPT"
 
-write_gpio_init_script(){
-log "Creating GPIO init script..."
-
-cat > "$GPIO_INIT_SCRIPT" <<EOF
+    cat > "$GPIO_INIT_SCRIPT" <<EOF
 #!/bin/bash
+set -euo pipefail
 
-START_BUTTON_PIN=$START_BUTTON_PIN
-WORKING_LED_PIN=$WORKING_LED_PIN
-COMPLETE_LED_PIN=$COMPLETE_LED_PIN
-READY_LED_PIN=$READY_LED_PIN
+# Wait briefly for GPIO subsystem
+sleep 1
 
-pinctrl set "\$WORKING_LED_PIN" op dl
-pinctrl set "\$COMPLETE_LED_PIN" op dl
-pinctrl set "\$READY_LED_PIN" op dl
+# Try libgpiod first
+if command -v gpioset >/dev/null 2>&1; then
+    CHIP="/dev/gpiochip0"
 
-pinctrl set "\$START_BUTTON_PIN" ip pu
+    # Set output defaults
+    gpioset "\$CHIP" $WORKING_LED_PIN=0 $COMPLETE_LED_PIN=0 $READY_LED_PIN=1 >/dev/null 2>&1 || true
+fi
 
-pinctrl set "\$READY_LED_PIN" op dh
-sleep 0.2
-pinctrl set "\$READY_LED_PIN" op dl
+# Try raspi-gpio if available
+if command -v raspi-gpio >/dev/null 2>&1; then
+    raspi-gpio set $WORKING_LED_PIN op dl || true
+    raspi-gpio set $COMPLETE_LED_PIN op dl || true
+    raspi-gpio set $READY_LED_PIN op dh || true
+fi
+
+exit 0
 EOF
 
-chmod 755 "$GPIO_INIT_SCRIPT"
+    chmod 755 "$GPIO_INIT_SCRIPT"
 }
 
-#######################################
-# SYSTEMD SERVICES
-#######################################
+write_gpio_init_service() {
+    log "Writing GPIO init service"
 
-write_systemd_services(){
-log "Creating systemd services..."
-
-cat > /etc/systemd/system/$GPIO_INIT_SERVICE_NAME <<EOF
+    cat > "/etc/systemd/system/$GPIO_INIT_SERVICE_NAME" <<EOF
 [Unit]
 Description=SD Factory GPIO Init
+After=multi-user.target
 
 [Service]
 Type=oneshot
 ExecStart=$GPIO_INIT_SCRIPT
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
+}
 
-cat > /etc/systemd/system/$SERVICE_NAME <<EOF
+write_wio_service() {
+    log "Writing Wio serial panel service"
+
+    cat > "/etc/systemd/system/$SERVICE_NAME" <<EOF
 [Unit]
-Description=Wio Serial Panel
-After=$GPIO_INIT_SERVICE_NAME
+Description=SD Factory Wio Serial Panel
+After=network.target $GPIO_INIT_SERVICE_NAME
+Wants=$GPIO_INIT_SERVICE_NAME
 
 [Service]
+Type=simple
 User=$FACTORY_USER
 WorkingDirectory=$FACTORY_HOME
 ExecStart=/usr/bin/python3 $FACTORY_HOME/wio_serial_panel.py
 Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
-systemctl daemon-reload
-systemctl enable "$GPIO_INIT_SERVICE_NAME"
-systemctl enable "$SERVICE_NAME"
 }
 
-#######################################
-# SUMMARY
-#######################################
+enable_services() {
+    log "Reloading systemd"
+    systemctl daemon-reload
 
-summary(){
-echo
-echo "=================================="
-echo " SD FACTORY INSTALL COMPLETE"
-echo "=================================="
-echo
-echo "Service status:"
-echo "systemctl status $SERVICE_NAME"
-echo
-echo "Logs:"
-echo "tail -f $FACTORY_HOME/logs/wio_serial_panel.log"
-echo
-echo "GPIO test:"
-echo "pinctrl get $START_BUTTON_PIN"
-echo
+    log "Enabling GPIO init service"
+    systemctl enable "$GPIO_INIT_SERVICE_NAME"
+
+    log "Enabling Wio serial panel service"
+    systemctl enable "$SERVICE_NAME"
 }
 
-#######################################
-# MAIN
-#######################################
+start_services() {
+    log "Starting GPIO init service"
+    systemctl restart "$GPIO_INIT_SERVICE_NAME" || true
 
-main(){
-require_root
-check_user
-check_required_files
-
-install_packages
-setup_gpio_user_access
-create_directories
-
-install_scripts
-make_scripts_executable
-
-write_sudoers
-write_gpio_init_script
-write_systemd_services
-
-summary
+    log "Starting Wio serial panel service"
+    systemctl restart "$SERVICE_NAME" || true
 }
 
-main
+show_status() {
+    echo
+    log "Setup complete."
+    echo
+    echo "Service status:"
+    systemctl --no-pager --full status "$GPIO_INIT_SERVICE_NAME" || true
+    echo
+    systemctl --no-pager --full status "$SERVICE_NAME" || true
+    echo
+    echo "Installed files in $FACTORY_HOME:"
+    ls -la "$FACTORY_HOME"
+    echo
+    echo "Useful commands:"
+    echo "  sudo systemctl status $SERVICE_NAME"
+    echo "  sudo journalctl -u $SERVICE_NAME -f"
+    echo "  sudo systemctl restart $SERVICE_NAME"
+}
+
+main() {
+    require_root
+    check_required_files
+    create_user_if_needed
+    install_packages
+    copy_scripts
+    set_permissions
+    write_sudoers
+    write_gpio_init_script
+    write_gpio_init_service
+    write_wio_service
+    enable_services
+    start_services
+    show_status
+}
+
+main "$@"

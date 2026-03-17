@@ -32,13 +32,14 @@ COMMANDS = {
     "SETTINGS_REPLACE": "/home/sdfactory/autosettingsreplace.sh",
     "EASYROM_REPLACE": "/home/sdfactory/autoeasyromreplace.sh",
 
-    # Future / placeholder commands
+    # Future / hidden from Wio menu for now
     "DEVBUTROMUPDATE": "__FUTURE__",
     "DEVROMUPDATE": "__FUTURE__",
+    "SDFSETTINGSUPDATE": "__FUTURE__",
+    "SDFEASYROMUPDATE": "__FUTURE__",
 
+    # Active visible options
     "SDFOSUPDATE": "/home/sdfactory/sdfactoryosupdate.sh",
-    "SDFSETTINGSUPDATE": "/home/sdfactory/sdfactorysettingsupdate.sh",
-    "SDFEASYROMUPDATE": "/home/sdfactory/sdfactoryeasyromsupdate.sh",
     "SETUP": "/home/sdfactory/setup.sh",
 }
 
@@ -85,7 +86,6 @@ def press_hw_start_button():
 
         GPIO.setup(HW_START_GPIO, GPIO.OUT, initial=idle_state)
 
-        # simulate button press
         GPIO.output(HW_START_GPIO, pressed_state)
         time.sleep(HW_START_PRESS_TIME)
         GPIO.output(HW_START_GPIO, idle_state)
@@ -102,7 +102,6 @@ def run_shell_command(cmd_key):
     cmd = COMMANDS[cmd_key]
 
     try:
-        # Special handling for reboot/shutdown so reply gets sent first
         if cmd_key == "REBOOT":
             subprocess.Popen("sudo shutdown -r now", shell=True)
             return True, "Reboot command sent"
@@ -117,7 +116,6 @@ def run_shell_command(cmd_key):
         if cmd == "__FUTURE__":
             return False, f"{cmd_key} not implemented yet"
 
-        # Local executable script
         if cmd.startswith("/"):
             valid, msg = validate_script(cmd)
             if not valid:
@@ -171,7 +169,6 @@ def main():
                 time.sleep(2)
                 log("Connected to Wio Terminal")
 
-                # Handshake so Wio knows Pi listener is ready
                 ser.write(b"READY\n")
                 ser.flush()
                 log("TX: READY")
@@ -189,7 +186,6 @@ def main():
 
                     log(f"RX: {repr(line)}")
 
-                    # Ignore anything except actual commands
                     if not line.startswith("CMD:"):
                         log(f"Ignoring non-command serial data: {repr(line)}")
                         continue

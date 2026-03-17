@@ -23,16 +23,23 @@ COMMANDS = {
     "REBOOT": "sudo reboot",
     "SHUTDOWN": "sudo shutdown now",
     "ENABLE_TERMINAL": "/home/sdfactory/enableterminal.sh",
+    "HW_START_BUTTON": "__HW_START_BUTTON__",
     "WORKFLOW": "/home/sdfactory/autosdworkflow.sh",
     "SDPREP": "/home/sdfactory/autosdprep.sh",
     "AUTO_EJECT": "/home/sdfactory/autoeject.sh",
     "IMAGE_CREATE": "/home/sdfactory/autoimagecreate.sh",
     "DTB_REPLACE": "/home/sdfactory/autodtbreplace.sh",
-    "SETTINGS_MOUNT": "/home/sdfactory/autosettingsmount.sh",
     "SETTINGS_REPLACE": "/home/sdfactory/autosettingsreplace.sh",
-    "EASYROM_MOUNT": "/home/sdfactory/autoeasyrommount.sh",
     "EASYROM_REPLACE": "/home/sdfactory/autoeasyromreplace.sh",
-    "HW_START_BUTTON": "__HW_START_BUTTON__",
+
+    # Future / placeholder commands
+    "DEVBUTROMUPDATE": "__FUTURE__",
+    "DEVROMUPDATE": "__FUTURE__",
+
+    "SDFOSUPDATE": "/home/sdfactory/sdfactoryosupdate.sh",
+    "SDFSETTINGSUPDATE": "/home/sdfactory/sdfactorysettingsupdate.sh",
+    "SDFEASYROMUPDATE": "/home/sdfactory/sdfactoryeasyromsupdate.sh",
+    "SETUP": "/home/sdfactory/setup.sh",
 }
 
 # =====================================
@@ -83,7 +90,6 @@ def press_hw_start_button():
         time.sleep(HW_START_PRESS_TIME)
         GPIO.output(HW_START_GPIO, idle_state)
 
-        # leave the pin in idle state
         return True, f"HW start button pressed on GPIO {HW_START_GPIO}"
 
     except Exception as e:
@@ -107,6 +113,9 @@ def run_shell_command(cmd_key):
 
         if cmd_key == "HW_START_BUTTON":
             return press_hw_start_button()
+
+        if cmd == "__FUTURE__":
+            return False, f"{cmd_key} not implemented yet"
 
         # Local executable script
         if cmd.startswith("/"):

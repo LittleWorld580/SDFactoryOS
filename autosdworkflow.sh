@@ -332,9 +332,9 @@ while true; do
     echo "Process complete"
     echo "Remove SD card to restart"
 
-    set_complete 1
-    set_working 0
-    set_ready 0
+    
+   
     wait_for_sd_removal
     all_off
+    set_complete 1
 done

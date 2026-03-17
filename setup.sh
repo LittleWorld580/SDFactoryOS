@@ -28,10 +28,10 @@ log "Using directory: $FACTORY_HOME"
 # INSTALL REQUIRED PACKAGES
 #######################################
 
-log "Installing required Python packages..."
+log "Installing required packages..."
 
 apt update
-apt install -y python3-serial
+apt install -y git python3-serial
 
 #######################################
 # FIX OWNERSHIP
@@ -65,7 +65,7 @@ fi
 
 # Start workflow automatically
 if [ -x /home/sdfactory/autosdworkflow.sh ]; then
-    /home/sdfactory/autosdworkflow.sh
+    sudo /home/sdfactory/autosdworkflow.sh
 fi
 EOF
 

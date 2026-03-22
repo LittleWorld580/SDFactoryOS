@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-IMAGE_FILE="/home/sdfactory/dArkOS_RG351MP_trixie_02012026.img"
+IMAGE_FILE="/home/sdfactory/dArkOSRE_R36_trixie_03082026.img"
 INPUT_FILESYSTEM="exfat"
 PARTITION_TIMEOUT=20
 POST_WRITE_SETTLE_SECONDS=3

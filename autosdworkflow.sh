@@ -19,17 +19,33 @@ REQUIRED_PARTITION_MIN_BYTES=8589934592
 BLINK_PID=""
 CURRENT_DEVICE=""
 
-cleanup() {
-    stop_all_blinking
-    pinctrl set "$WORKING_LED_PIN" op dl >/dev/null 2>&1 || true
-    pinctrl set "$COMPLETE_LED_PIN" op dl >/dev/null 2>&1 || true
-    pinctrl set "$READY_LED_PIN" op dl >/dev/null 2>&1 || true
-    pinctrl set "$WORKING_LED_PIN" ip >/dev/null 2>&1 || true
-    pinctrl set "$COMPLETE_LED_PIN" ip >/dev/null 2>&1 || true
-    pinctrl set "$READY_LED_PIN" ip >/dev/null 2>&1 || true
-    pinctrl set "$START_BUTTON_PIN" ip >/dev/null 2>&1 || true
+WORKFLOW_STATE_FILE="/tmp/sdworkflow_state"
+WORKFLOW_PROGRESS_FILE="/tmp/sdworkflow_progress"
+WORKFLOW_COLOR_FILE="/tmp/sdworkflow_status_color"
+LAST_RESULT_FILE="/tmp/sd_factory_last_result"
+LAST_ALERT_FILE="/tmp/sd_factory_last_alert"
+
+set_workflow_state() {
+    local state="${1:-IDLE}"
+    local progress="${2:-0}"
+    local color="${3:-idle}"
+
+    echo "$state" > "$WORKFLOW_STATE_FILE"
+    echo "$progress" > "$WORKFLOW_PROGRESS_FILE"
+    echo "$color" > "$WORKFLOW_COLOR_FILE"
 }
-trap cleanup EXIT INT TERM
+
+set_last_result() {
+    echo "${1:-NONE}" > "$LAST_RESULT_FILE"
+}
+
+set_last_alert() {
+    echo "${1:-NONE}" > "$LAST_ALERT_FILE"
+}
+
+clear_last_alert() {
+    echo "NONE" > "$LAST_ALERT_FILE"
+}
 
 log() {
     echo "[WORKFLOW] $*"
@@ -150,10 +166,14 @@ gpio_init() {
     pinctrl set "$START_BUTTON_PIN" ip pu
 }
 
-set_working() { [ "${1:-0}" = "1" ] && pinctrl set "$WORKING_LED_PIN" op dh || pinctrl set "$WORKING_LED_PIN" op dl; }
+set_working()  { [ "${1:-0}" = "1" ] && pinctrl set "$WORKING_LED_PIN" op dh || pinctrl set "$WORKING_LED_PIN" op dl; }
 set_complete() { [ "${1:-0}" = "1" ] && pinctrl set "$COMPLETE_LED_PIN" op dh || pinctrl set "$COMPLETE_LED_PIN" op dl; }
-set_ready() { [ "${1:-0}" = "1" ] && pinctrl set "$READY_LED_PIN" op dh || pinctrl set "$READY_LED_PIN" op dl; }
-all_off() { set_working 0; set_complete 0; set_ready 0; }
+set_ready()    { [ "${1:-0}" = "1" ] && pinctrl set "$READY_LED_PIN" op dh || pinctrl set "$READY_LED_PIN" op dl; }
+
+all_off() {
+    set_working 0
+    set_complete 0
+}
 
 stop_all_blinking() {
     if [ -n "${BLINK_PID:-}" ]; then
@@ -163,43 +183,114 @@ stop_all_blinking() {
     fi
 }
 
-alternate_leds() {
+blink_working() {
     stop_all_blinking
-    ( while true; do set_working 0; set_complete 1; sleep 0.4; set_working 1; set_complete 0; sleep 0.4; done ) &
+    all_off
+    (
+        while true; do
+            set_working 1
+            set_complete 0
+            set_ready 1
+            sleep 0.4
+            set_working 0
+            set_complete 0
+            set_ready 1
+            sleep 0.4
+        done
+    ) &
+    BLINK_PID=$!
+}
+
+blink_ready() {
+    stop_all_blinking
+    all_off
+    (
+        while true; do
+            set_working 0
+            set_complete 0
+            set_ready 1
+            sleep 0.4
+            set_working 0
+            set_complete 0
+            set_ready 0
+            sleep 0.4
+        done
+    ) &
     BLINK_PID=$!
 }
 
 blink_leds() {
     stop_all_blinking
-    ( while true; do set_working 1; set_complete 1; sleep 0.4; set_working 0; set_complete 0; sleep 0.4; done ) &
+    all_off
+    (
+        while true; do
+            set_working 1
+            set_complete 1
+            set_ready 1
+            sleep 0.4
+            set_working 0
+            set_complete 0
+            set_ready 1
+            sleep 0.4
+        done
+    ) &
     BLINK_PID=$!
 }
 
-stop_blinking() { stop_all_blinking; set_working 0; set_complete 0; }
-
-blink_working() {
+alternate_leds() {
     stop_all_blinking
-    ( while true; do set_working 1; sleep 0.4; set_working 0; sleep 0.4; done ) &
+    all_off
+    (
+        while true; do
+            set_working 1
+            set_complete 0
+            set_ready 1
+            sleep 0.4
+            set_working 0
+            set_complete 1
+            set_ready 1
+            sleep 0.4
+        done
+    ) &
     BLINK_PID=$!
 }
 
-stop_blinking_working() { stop_all_blinking; set_working 0; }
-
-blink_ready() {
+stop_blinking() {
     stop_all_blinking
-    ( while true; do set_ready 1; sleep 0.4; set_ready 0; sleep 0.4; done ) &
-    BLINK_PID=$!
+    all_off
+    set_ready 1
 }
+
+stop_blinking_working() {
+    stop_all_blinking
+    all_off
+    set_ready 1
+}
+
+cleanup() {
+    stop_all_blinking
+    set_working 0
+    set_complete 0
+    set_ready 1
+    pinctrl set "$WORKING_LED_PIN" ip >/dev/null 2>&1 || true
+    pinctrl set "$COMPLETE_LED_PIN" ip >/dev/null 2>&1 || true
+    pinctrl set "$START_BUTTON_PIN" ip >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
 
 error_state() {
     local msg="$1"
+    set_workflow_state "FAILED" "100" "error"
+    set_last_result "FAILED"
+    set_last_alert "$msg"
+
     echo
     echo "ERROR: $msg"
     echo
     echo "Press ENTER to exit to terminal"
-    stop_all_blinking
-    all_off
+
     blink_ready
+
     if [ "$CONTROL_MODE" = "console" ]; then
         read -r
         exit 1
@@ -221,8 +312,14 @@ wait_for_start() {
     log "Waiting for START button..."
     while true; do
         value="$(pinctrl get "$START_BUTTON_PIN" | grep -o 'lo\|hi' | head -n1)"
-        if [ "$BUTTON_PRESSED_VALUE" = "0" ] && [ "$value" = "lo" ]; then sleep 0.25; break; fi
-        if [ "$BUTTON_PRESSED_VALUE" = "1" ] && [ "$value" = "hi" ]; then sleep 0.25; break; fi
+        if [ "$BUTTON_PRESSED_VALUE" = "0" ] && [ "$value" = "lo" ]; then
+            sleep 0.25
+            break
+        fi
+        if [ "$BUTTON_PRESSED_VALUE" = "1" ] && [ "$value" = "hi" ]; then
+            sleep 0.25
+            break
+        fi
         sleep 0.1
     done
 }
@@ -274,67 +371,107 @@ wait_for_start_with_sd_and_easyroms() {
 
 run_script() {
     local script="$1"
+    local step_name="${2:-RUNNING}"
+
     [ -x "$script" ] || error_state "Script missing or not executable: $script"
+
     export TARGET_SD_DEVICE
     TARGET_SD_DEVICE="$(device_path)"
+
+    log "Running $step_name using $script"
     "$script" || error_state "Script failed: $script"
 }
 
 clear
 gpio_init
 all_off
+set_ready 1
+
+set_workflow_state "IDLE" "0" "idle"
+set_last_result "IDLE"
+clear_last_alert
 
 while true; do
     clear
-    all_off
+
     set_ready 1
+
+    set_workflow_state "WAITING_FOR_SD" "0" "idle"
+    set_last_result "WAITING"
+    clear_last_alert
+
     echo
     echo "Insert SD card then push START"
 
     wait_for_sd_card
+
+    set_workflow_state "WAITING_FOR_START_STAGE_1" "5" "running"
     blink_leds
     wait_for_start_with_sd
     stop_blinking
 
     echo
     echo "Starting process on $(device_path)..."
+    set_workflow_state "SD_PREP" "15" "running"
     blink_working
 
-    run_script "$AUTOSDPREP"
-    run_script "$AUTOIMAGECREATE"
-    run_script "$AUTODTBREPLACE"
-    run_script "$AUTOEJECT"
+    run_script "$AUTOSDPREP" "SD_PREP"
+
+    set_workflow_state "IMAGE_CREATE" "35" "running"
+    run_script "$AUTOIMAGECREATE" "IMAGE_CREATE"
+
+    set_workflow_state "DTB_REPLACE" "55" "running"
+    run_script "$AUTODTBREPLACE" "DTB_REPLACE"
+
+    set_workflow_state "EJECT_STAGE_1" "70" "running"
+    run_script "$AUTOEJECT" "EJECT_STAGE_1"
 
     stop_blinking_working
-    all_off
 
     echo
     echo "Remove SD card and boot R36S"
     echo "Then insert SD card and push START"
 
+    set_workflow_state "WAITING_FOR_BOOT_AND_REINSERT" "75" "running"
     alternate_leds
     wait_for_sd_removal
+
+    set_workflow_state "WAITING_FOR_RETURN_SD" "78" "running"
     wait_for_sd_card
+
+    set_workflow_state "WAITING_FOR_EASYROMS" "82" "running"
     wait_for_easyroms_partition
     stop_all_blinking
+    all_off
+    set_ready 1
 
+    set_workflow_state "WAITING_FOR_START_STAGE_2" "85" "running"
     blink_leds
     wait_for_start_with_sd_and_easyroms
     stop_blinking
 
+    set_workflow_state "SETTINGS_REPLACE" "90" "running"
     blink_working
-    run_script "$SETTINGS_REPLACE"
-    run_script "$EASYROM_REPLACE"
-    run_script "$AUTOEJECT"
+    run_script "$SETTINGS_REPLACE" "SETTINGS_REPLACE"
+
+    set_workflow_state "EASYROM_REPLACE" "96" "running"
+    run_script "$EASYROM_REPLACE" "EASYROM_REPLACE"
     stop_blinking_working
 
     echo
     echo "Process complete"
     echo "Remove SD card to restart"
 
+    set_workflow_state "COMPLETE" "100" "complete"
+    set_last_result "COMPLETE"
+    set_complete 1
+    clear_last_alert
+
     
-   
+    set_ready 1
     wait_for_sd_removal
     all_off
-    set_complete 1
+    set_ready 0
+
+    set_workflow_state "IDLE" "0" "idle"
 done

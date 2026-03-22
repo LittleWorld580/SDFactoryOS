@@ -4,8 +4,17 @@ set -euo pipefail
 PARTITION_NUMBER="2"
 MOUNTPOINT="/mnt/settingsroot"
 WAIT_SECONDS=2
+
 SOURCE_SETTINGS="/home/sdfactory/emulationstationhiddenfolder/.emulationstation"
 TARGET_SETTINGS="/home/ark/.emulationstation"
+
+# retroarch config
+SOURCE_RETROARCH="/home/sdfactory/emulationstationhiddenfolder/retroarch.cfg"
+TARGET_RETROARCH="/home/ark/retroarch.cfg"
+
+# NEW: .config folder
+SOURCE_CONFIG="/home/sdfactory/emulationstationhiddenfolder/.config"
+TARGET_CONFIG="/home/ark/.config"
 
 log() {
     echo "[SETTINGS_REPLACE] $*"
@@ -33,16 +42,19 @@ resolve_base_device() {
 }
 
 main() {
-    local base_device device current_mount target_folder target_parent
+    local base_device device current_mount target_folder target_parent config_target config_parent
 
     [ -d "$SOURCE_SETTINGS" ] || { log "ERROR: Source settings folder not found: $SOURCE_SETTINGS"; exit 1; }
+    [ -f "$SOURCE_RETROARCH" ] || { log "ERROR: retroarch.cfg not found: $SOURCE_RETROARCH"; exit 1; }
+    [ -d "$SOURCE_CONFIG" ] || { log "ERROR: .config folder not found: $SOURCE_CONFIG"; exit 1; }
 
     base_device="$(resolve_base_device || true)"
     [ -n "$base_device" ] || { log "ERROR: Could not determine SD device"; exit 1; }
+
     device="${base_device}${PARTITION_NUMBER}"
     [ -b "$device" ] || { log "ERROR: Device not found: $device"; exit 1; }
 
-    log "Starting EmulationStation settings replacement on $device"
+    log "Starting settings replacement on $device"
     sync
     sleep "$WAIT_SECONDS"
 
@@ -59,20 +71,38 @@ main() {
     MOUNTPOINT="$(lsblk -no MOUNTPOINT "$device" | head -n1)"
     [ -n "$MOUNTPOINT" ] || { log "ERROR: Failed to mount $device"; exit 1; }
 
+    ########################################
+    # .emulationstation
+    ########################################
     target_folder="$MOUNTPOINT$TARGET_SETTINGS"
     target_parent="$(dirname "$target_folder")"
 
-    [ -d "$MOUNTPOINT" ] || { log "ERROR: Mount point missing: $MOUNTPOINT"; exit 1; }
-    [ -d "$target_parent" ] || { log "ERROR: Target parent folder missing: $target_parent"; exit 1; }
+    [ -d "$target_parent" ] || { log "ERROR: Target parent missing: $target_parent"; exit 1; }
 
-    log "Removing existing target folder..."
+    log "Replacing .emulationstation..."
     rm -rf "$target_folder"
-
-    log "Copying new settings folder..."
     cp -a "$SOURCE_SETTINGS" "$target_folder"
-    sync
 
-    log "Settings replacement complete"
+    ########################################
+    # .config
+    ########################################
+    config_target="$MOUNTPOINT$TARGET_CONFIG"
+    config_parent="$(dirname "$config_target")"
+
+    [ -d "$config_parent" ] || { log "ERROR: Config parent missing: $config_parent"; exit 1; }
+
+    log "Replacing .config..."
+    rm -rf "$config_target"
+    cp -a "$SOURCE_CONFIG" "$config_target"
+
+    ########################################
+    # retroarch.cfg
+    ########################################
+    log "Copying retroarch.cfg..."
+    cp -f "$SOURCE_RETROARCH" "$MOUNTPOINT$TARGET_RETROARCH"
+
+    sync
+    log "Settings + .config + RetroArch config replacement complete"
 }
 
 main
